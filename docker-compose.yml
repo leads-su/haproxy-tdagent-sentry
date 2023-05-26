@@ -1,0 +1,32 @@
+version: '3.7'
+
+services:
+  haproxy:
+    image: haproxy:2.6.1
+    restart: unless-stopped
+    ports:
+      - 9999:9999
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - ./haproxy/rm4fluentd.lua:/usr/local/etc/haproxy/rm4fluentd.lua
+    networks:
+      - haproxy-tdagent-sentry-network
+
+  td-agent:
+    build:
+      context: ./td-agent/
+    restart: unless-stopped
+    ports:
+      - 9888:9888
+    environment:
+      SENTRY_ADDR: ${SENTRY_ADDR}
+    volumes:
+      - ./td-agent/td-agent.conf:/etc/td-agent/td-agent.conf
+    networks:
+      - haproxy-tdagent-sentry-network
+
+networks:
+  haproxy-tdagent-sentry-network:
+    driver: bridge
+    ipam:
+      driver: default
