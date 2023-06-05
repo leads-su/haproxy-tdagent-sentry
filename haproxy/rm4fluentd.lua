@@ -1,6 +1,8 @@
 
+local app = {}
+
 -- создание ответа на плохой запрос
-local function make_bad_response(txn, reason)
+app.make_bad_response = function(txn, reason)
   local reply = txn:reply()
   reply:set_status(400, 'Bad request')
   reply:add_header('content-type', 'text/plain')
@@ -11,41 +13,55 @@ local function make_bad_response(txn, reason)
   return reply;
 end
 
+-- выходи из приложения с отдачей http ответа
+app.exit = function(txn, err)
+  core.Alert(err)
+  txn:done(app.make_bad_response(txn, err))
+end
+
+-- если v == (false | nil) тогда выход из приложения с отдачей http ответа
+app.assert = function(txn, v, msg)
+  if (v == false or v == nil) then
+    app.exit(txn, msg)
+  end
+end
+
+----------------------------------------------------------------------------
+
 -- обработчик запроса
 local function rm4fluentd(txn)
+  core.Info("url: " .. txn.f:url())
+  -- извлечение id проекта и типа сообщения (store || envelope) из пути запроса
+  local project_id, type_msg = string.match(txn.sf:path(), '/api/(%d+)/(%w+)/')
+  app.assert(txn, project_id, 'path project_id is nil')
+  app.assert(txn, type_msg, 'type_msg is nil, expected store or envelope')
 
-  --извлечение projectId из пути запроса
-  local projectId = string.match(txn.sf:path(), '/api/(%d+)/store');
-  if (projectId == nil) then
-    local err = 'path projectId is nil'
-    core.Alert(err)
-    txn:done(make_bad_response(txn, err))
-    return
+  -- ключ проекта в sentry
+  local sentry_key = nil
+
+  -- извлечение заголовка авторизации для sentry
+  local header_auth = txn.http:req_get_headers()['x-sentry-auth']
+  if (header_auth ~= nil) then
+    header_auth = header_auth[0];
+    local key = string.match(header_auth, 'sentry_key%s*=%s*(%w+)')
+    if (key ~= nil) then
+      sentry_key = key
+    end
   end
 
-  -- извеление заголовка авторизации для sentry
-  local headerAuth = txn.http:req_get_headers()['x-sentry-auth'];
-  if (headerAuth == nil) then
-    local err = 'header x-sentry-auth not found'
-    core.Alert(err)
-    txn:done(make_bad_response(txn, err))
-    return
+  -- извлечение sentry_key из пути запроса
+  local path_key = string.match(txn.sf:url(), 'sentry_key=(%w+)')
+  if (path_key ~= nil) then
+    sentry_key = path_key
   end
-  headerAuth = headerAuth[0];
 
-  -- извлечение ключа для проекта
-  local key = string.match(headerAuth, 'sentry_key%s*=%s*(%w+)');
-  if (key == nil) then
-    local err = 'sentry_key not found in header x-sentry-auth'
-    core.Alert(err)
-    txn:done(make_bad_response(txn, err))
-    return
-  end
+  -- если все-таки не удалось найти sentry_key тогда уходим
+  app.assert(txn, sentry_key, 'sentry_key not found in header or path')
 
   -- формирование и подмена пути для fluentd
-  local newPath = '/sentry.' .. projectId .. '.' .. key;
-  core.Info('new path: ' .. newPath);
-  txn.http:req_set_path(newPath);
+  local new_path = '/sentry.' .. type_msg .. '.' .. project_id .. '.' .. sentry_key
+  core.Info('new path: ' .. new_path)
+  txn.http:req_set_path(new_path)
 end
 
 --##########################################################################
