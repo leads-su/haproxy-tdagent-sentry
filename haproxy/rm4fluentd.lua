@@ -13,7 +13,7 @@ app.make_bad_response = function(txn, reason)
   return reply;
 end
 
--- выходи из приложения с отдачей http ответа
+-- выход из приложения с отдачей http ответа
 app.exit = function(txn, err)
   core.Alert(err)
   txn:done(app.make_bad_response(txn, err))
