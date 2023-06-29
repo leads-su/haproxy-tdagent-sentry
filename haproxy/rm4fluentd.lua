@@ -49,10 +49,16 @@ local function rm4fluentd(txn)
     end
   end
 
-  -- извлечение sentry_key из пути запроса
-  local path_key = string.match(txn.sf:url(), 'sentry_key=(%w+)')
+  -- извлечение sentry_key из пути запроса (для tunnel)
+  local path_key = string.match(txn.sf:path(), '/api/%d+/%w+/(%w+)')
   if (path_key ~= nil) then
     sentry_key = path_key
+  end
+
+  -- извлечение sentry_key из параметров запроса
+  local query_key = string.match(txn.sf:url(), 'sentry_key=(%w+)')
+  if (query_key ~= nil) then
+    sentry_key = query_key
   end
 
   -- если все-таки не удалось найти sentry_key тогда уходим
