@@ -1,46 +1,80 @@
 
 # Транспортировка событий в Sentry через HAProxy + td-agent
 
-## Схема работы
+![](haproxy-tdagent-sentry.jpg)
 
+Схема работы:
 * Приложение отправляет сформированный для `Sentry` запрос на `HAProxy`
-* `HAProxy` преобразовывает в понятные данные для `td-agent`
-* `td-agent` преобразовывает в понятные данные для `Sentry` и отправлет в `Sentry` если сервер доступен, иначе ждет доступности
+* `HAProxy` преобразовывает в понятные данные для `td-agent` при помощи `lua скрипта`
+* `td-agent` преобразовывает в понятные данные для `Sentry` и отправлет в `Sentry` если сервер доступен, иначе буферизирует на диск и ждет доступности
+
 
 ## Запуск и тестирование
 
 Запуск инфраструктуры:
 ```bash
-$ export SENTRY_ADDR="https://sentry.domain:port"
-$ docker compose up
+export SENTRY_ADDR="https://sentry.domain:port"
+docker compose up
+```
+
+Теперь `HAProxy` доступен по адресу `localhost:9999` а `td-agent` на `localhost:9888`.
+
+### store endpoint
+
+Объявим переменные проекта и ключа:
+```bash
+PROJECT_ID=0
+SENTRY_KEY=""
 ```
 
 Отправка события без сжатия:
 ```bash
 curl -v \
-    -d '{"asd":"zxc"}' \
+    -d '{"exception":{"values":[{"type":"Test issue","value":"store"}]}}' \
     -H 'Content-type: application/json' \
-    -H 'X-Sentry-Auth: Sentry sentry_version=7, sentry_client=td-agent, sentry_key=KEY' \
-    http://localhost:9999/api/2/store/
+    -H "X-Sentry-Auth: Sentry sentry_version=7, sentry_client=td-agent, sentry_key=$SENTRY_KEY" \
+    http://localhost:9999/api/$PROJECT_ID/store/
 ```
 
 Отправка события со сжатием:
 ```bash
-echo '{"asd":"zxc"}' | gzip > json.gz
+PROJECT_ID=0
+echo '{"exception":{"values":[{"type":"Test issue","value":"store"}]}}' | gzip > json.gz
 curl -v \
     --data-binary @json.gz \
     -H "Content-Encoding: gzip" \
     -H 'Content-type: application/json' \
-    -H 'X-Sentry-Auth: Sentry sentry_version=7, sentry_client=td-agent, sentry_key=KEY' \
-    http://localhost:9999/api/2/store/
+    -H "X-Sentry-Auth: Sentry sentry_version=7, sentry_client=td-agent, sentry_key=$SENTRY_KEY" \
+    http://localhost:9999/api/$PROJECT_ID/store/
+```
+
+### envelope endpoint
+
+Объявим переменные проекта и ключа:
+```bash
+PROJECT_ID=0
+SENTRY_KEY=""
+```
+
+Готовим тело запроса:
+```bash
+echo '{"sdk":{"name":"sentry.javascript.vue","version":"7.54.0"},"trace":{"environment":"test"}}' > body.json
+echo '{"type":"event"}' >> body.json
+echo '{"exception":{"values":[{"type":"Test issue","value":"envelope"}]}}' >> body.json
 ```
 
 Отправка `envelope`:
-```http request
-POST http://localhost:9999/api/{PROJECT_ID}/envelope/?sentry_key={KEY}&sentry_version=7
-COntent-type: text/plain
+```bash
+curl -v \
+  -H 'Content-type: text/plain' \
+  --data-binary @body.json \
+  "http://localhost:9999/api/$PROJECT_ID/envelope/?sentry_key=$SENTRY_KEY&sentry_version=7"
+```
 
-{"event_id":"524a7f126d2140039e6ff34b91e0ab31","sent_at":"2023-06-05T13:28:07.810Z","sdk":{"name":"sentry.javascript.vue","version":"7.54.0"},"trace":{"environment":"production","trace_id":"5faf9b966dd843abb0b40fb6d5f1bd00","sample_rate":"1"}}
-{"type":"event"}
-{"asd":"asd"}
+Отправка через `envelope` через [tunnel](https://docs.sentry.io/platforms/javascript/troubleshooting/#dealing-with-ad-blockers)
+```bash
+curl -v \
+  -H 'Content-type: text/plain' \
+  --data-binary @body.json \
+  "http://localhost:9999/api/$PROJECT_ID/envelope/$SENTRY_KEY/"
 ```
